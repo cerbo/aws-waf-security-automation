@@ -1,0 +1,78 @@
+#!/bin/bash
+###############################################################################
+#   Copyright 2016 Cerbo.IO, LLC.
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+###############################################################################
+
+function usage() {
+    echo "Usage: $0 <customer> <s3-logs-bucket> <command>"
+    echo 
+    echo "<command> Options:"
+    echo -e "\tcreate = create a new WAF setup for <customer>"
+    echo -e "\tdelete = delete a given <customer> WAF setup"
+    echo
+    echo "Example: $0 cerbo s3-bucket-name create"
+    echo "Example: $0 customer01 s3-bucket-name delete"
+}
+
+
+if [ $# -ne 3 ]; then
+    usage
+    exit
+fi
+
+cp -f .template.main.tf main.tf
+
+PROJECT=""
+S3=""
+
+
+if [ $# -eq 0 ]; then
+    echo "#############################################"
+    echo "# NOTE: Please use only up to 15 characters #"
+    echo "#############################################"
+    echo
+    read -p "[REQUIRED] Please enter Customer/Project name: " PROJECT
+    echo
+    echo
+    read -p "[REQUIRED] CDN S3 Logs Bucket: " S3
+else
+    PROJECT=$1;
+    S3=$2;
+fi
+
+sed -i -e "s/cerboXYZcerbo/$PROJECT/" main.tf
+sed -i -e "s/cerboZYXcerbo/$S3/" main.tf
+
+# NOTE: "-parallelism=1" is needed until Terraform fixes a nasty bug
+# https://github.com/hashicorp/terraform/issues/10335
+
+# UPDATE: fixed in version 0.9.4, but actually keeping it helps with
+# AWS API gateway race condition which does not properly support
+# dependencies.
+
+if [ $3 == "create" ]; then
+    mkdir -p env/$PROJECT
+    terraform apply -parallelism=1 -state=env/$PROJECT/terraform.tfstate
+elif [ $3 == "delete" ]; then
+    echo "##############################"
+    echo "# WARNING! WARNING! WARNING! #"
+    echo "##############################"
+    echo
+    terraform destroy -parallelism=1 -state=env/$PROJECT/terraform.tfstate
+else
+    echo "Invalid Command: $3"
+    echo
+    usage
+fi
