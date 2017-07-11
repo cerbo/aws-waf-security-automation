@@ -17,7 +17,7 @@
 resource "aws_lambda_function" "SolutionHelper" {
     depends_on = ["aws_s3_bucket_object.SolutionHelperZip"]
     function_name = "${var.customer}-SolutionHelper-${element(split("-",uuid()),0)}"
-    descripton = "This lambda function executes generic common tasks to support this solution."
+    description = "This lambda function executes generic common tasks to support this solution."
     role = "${aws_iam_role.SolutionHelperRole.arn}"
     handler = "log-parser.lambda_handler"
     #s3_bucket = "solutions-${var.aws_region}"

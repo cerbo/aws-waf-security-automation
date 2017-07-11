@@ -19,22 +19,18 @@
 # see: 'Change this line' #
 ###########################
 provider "aws" {
-    # Change this line:
+    # *** Change ONLY THIS LINE: ***
     shared_credentials_file  = "/Users/user/.aws/credentials"
     region = "${var.aws_region}"
 }
 
 variable "customer" {
     description = "[REQUIRED] Customer/Project Name (max 15 characters):"
-
-    # Change this line:
     default     = "cerboXYZcerbo"
 }
 
 variable "CloudFrontAccessLogBucket" {
     description = "[REQUIRED] CDN S3 Logs Bucket:"
-
-    # Change this line:
     default     = "cerboZYXcerbo"
 }
 ###############################################################################
