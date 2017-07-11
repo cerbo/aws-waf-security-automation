@@ -22,7 +22,7 @@ resource "aws_lambda_function" "SolutionHelper" {
     handler = "log-parser.lambda_handler"
     #s3_bucket = "solutions-${var.aws_region}"
     #s3_key = "library/solution-helper/v1/solution-helper.zip"
-    s3_bucket = "waflambdafiles"
+    s3_bucket = "${var.customer}-waflambdafiles"
     s3_key = "solution-helper.zip"
     runtime = "python2.7"
     timeout = "300"

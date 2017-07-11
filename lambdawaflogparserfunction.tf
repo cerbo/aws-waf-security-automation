@@ -22,7 +22,7 @@ resource "aws_lambda_function" "LambdaWAFLogParserFunction" {
     handler = "log-parser.lambda_handler"
     #s3_bucket = "solutions-${var.aws_region}"
     #s3_key = "aws-waf-security-automations/v1/log-parser.zip"
-    s3_bucket = "waflambdafiles"
+    s3_bucket = "${var.customer}-waflambdafiles"
     s3_key = "log-parser.zip"
     runtime = "python2.7"
     memory_size = "512"
