@@ -16,14 +16,8 @@
 
 ###############################################################################
 # CUSTOM CONFIGURATION    #
-# see: 'Change this line' #
+# Let 'waf' script change #
 ###########################
-provider "aws" {
-    # *** Change ONLY THIS LINE: ***
-    shared_credentials_file  = "/Users/user/.aws/credentials"
-    region = "${var.aws_region}"
-}
-
 variable "customer" {
     description = "[REQUIRED] Customer/Project Name (max 15 characters):"
     default     = "cerboXYZcerbo"

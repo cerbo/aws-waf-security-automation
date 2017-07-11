@@ -11,7 +11,13 @@ Cloud Formation) are:
 
 ### Getting Started is very simple
 
+First: Edit "amazon-cred-file.tf", and point to your AWS cred file.
+
+Then, for each project/customer's CDN S3 bucket, run:
+
 ```
+
+
 % ./waf --help
 Usage: ./waf <customer> <s3-logs-bucket> <command>
 
