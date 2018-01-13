@@ -39,6 +39,8 @@ resource "aws_lambda_function" "LambdaWAFBadBotParserFunction" {
             WAFBlockPeriod = "${var.WAFBlockPeriod}"
             WAFBadBotSet = "${aws_waf_ipset.WAFBadBotSet.id}"
             SendAnonymousUsageData = "${var.SendAnonymousUsageData}"
+            LOG_TYPE = "${var.LogType}"
+            REGION = "${var.aws_region}"
             UUID = "${uuid()}"
         }
     }

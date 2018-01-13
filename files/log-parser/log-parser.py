@@ -15,54 +15,53 @@ import gzip
 import datetime
 import time
 import math
+from os import environ
+
 from urllib2 import Request
 from urllib2 import urlopen
-### CERBO.IO | 12-25-2016 | Custom Feed WAF with dynamic variables from Terraform
-import os
 
 print("Loading function")
 
 #======================================================================================================================
 # Constants
 #======================================================================================================================
-# Configurables
-#OUTPUT_BUCKET = None
-#IP_SET_ID_BLACKLIST = None
-#IP_SET_ID_AUTO_BLOCK = None
-#BLACKLIST_BLOCK_PERIOD = None # in minutes
-#REQUEST_PER_MINUTE_LIMIT = None
-#ERROR_PER_MINUTE_LIMIT = None
-#SEND_ANONYMOUS_USAGE_DATA = None
-#UUID = None
+### CERBO.IO | 12-25-2016 | Updated: 1-13-2018 | Custom Feed WAF with dynamic variables from Terraform
+OUTPUT_BUCKET = environ['CloudFrontAccessLogBucket']
+IP_SET_ID_BLACKLIST = environ['BlacklistIPSetID']
+IP_SET_ID_AUTO_BLOCK = environ['AutoBlockIPSetID']
+BLACKLIST_BLOCK_PERIOD = int(environ['WAFBlockPeriod'])
+REQUEST_PER_MINUTE_LIMIT = int(environ['RequestThreshold'])
+ERROR_PER_MINUTE_LIMIT = int(environ['ErrorThreshold'])
+SEND_ANONYMOUS_USAGE_DATA = environ['SendAnonymousUsageData']
+UUID = environ['UUID']
 
-### CERBO.IO | 12-25-2016 | Custom Feed WAF with dynamic variables from Terraform
-OUTPUT_BUCKET = os.environ['CloudFrontAccessLogBucket']
-IP_SET_ID_BLACKLIST = os.environ['BlacklistIPSetID']
-IP_SET_ID_AUTO_BLOCK = os.environ['AutoBlockIPSetID']
-BLACKLIST_BLOCK_PERIOD = int(os.environ['WAFBlockPeriod'])
-REQUEST_PER_MINUTE_LIMIT = int(os.environ['RequestThreshold'])
-ERROR_PER_MINUTE_LIMIT = int(os.environ['ErrorThreshold'])
-SEND_ANONYMOUS_USAGE_DATA = os.environ['SendAnonymousUsageData']
-UUID = os.environ['UUID']
-
-BLOCK_ERROR_CODES = ['400','403','404','405'] # error codes to parse logs for
-
-LIMIT_IP_ADDRESS_RANGES_PER_IP_MATCH_CONDITION = 1000
 API_CALL_NUM_RETRIES = 3
-
+BLOCK_ERROR_CODES = ['400','403','404','405'] # error codes to parse logs for
 OUTPUT_FILE_NAME = 'aws-waf-security-automations-current-blocked-ips.json'
 
-# Fixed
-LINE_FORMAT = {
+# CloudFront Access Logs
+# http://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/AccessLogs.html#BasicDistributionFileFormat
+LINE_FORMAT_CLOUD_FRONT = {
+    'delimiter': '\t',
     'date': 0,
     'time' : 1,
     'source_ip' : 4,
     'code' : 8
 }
+# ALB Access Logs
+# http://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html
+LINE_FORMAT_ALB = {
+    'delimiter': ' ',
+    'timestamp': 1,
+    'source_ip' : 3,
+    'code' : 8
+}
+
 
 REQUEST_COUNTER_INDEX = 0
 ERROR_COUNTER_INDEX = 1
 
+waf = None
 
 #======================================================================================================================
 # Auxiliary Functions
@@ -75,7 +74,7 @@ def get_outstanding_requesters(bucket_name, key_name):
     result = {}
     num_requests = 0
     try:
-        if REQUEST_PER_MINUTE_LIMIT < 0 and ERROR_PER_MINUTE_LIMIT < 0:
+        if int(ERROR_PER_MINUTE_LIMIT) < 0:
             return outstanding_requesters, num_requests
 
         #--------------------------------------------------------------------------------------------------------------
@@ -94,16 +93,27 @@ def get_outstanding_requesters(bucket_name, key_name):
                     if line.startswith('#'):
                         continue
 
-                    line_data = line.split('\t')
-                    request_key = line_data[LINE_FORMAT['date']]
-                    request_key += '-' + line_data[LINE_FORMAT['time']][:-3]
-                    request_key += '-' + line_data[LINE_FORMAT['source_ip']]
+                    return_code_index = None
+                    if environ['LOG_TYPE'] == 'cloudfront':
+                        line_data = line.split(LINE_FORMAT_CLOUD_FRONT['delimiter'])
+                        request_key = line_data[LINE_FORMAT_CLOUD_FRONT['date']]
+                        request_key += '-' + line_data[LINE_FORMAT_CLOUD_FRONT['time']][:-3]
+                        request_key += '-' + line_data[LINE_FORMAT_CLOUD_FRONT['source_ip']]
+                        return_code_index = LINE_FORMAT_CLOUD_FRONT['code']
+                    elif environ['LOG_TYPE'] == 'alb':
+                        line_data = line.split(LINE_FORMAT_ALB['delimiter'])
+                        request_key = line_data[LINE_FORMAT_ALB['timestamp']].rsplit(':', 1)[0]
+                        request_key += '-' + line_data[LINE_FORMAT_ALB['source_ip']].split(':')[0]
+                        return_code_index = LINE_FORMAT_ALB['code']
+                    else:
+                        return outstanding_requesters, num_requests
+
                     if request_key in result.keys():
                         result[request_key][REQUEST_COUNTER_INDEX] += 1
                     else:
                         result[request_key] = [1,0]
 
-                    if line_data[LINE_FORMAT['code']] in BLOCK_ERROR_CODES:
+                    if line_data[return_code_index] in BLOCK_ERROR_CODES:
                         result[request_key][ERROR_COUNTER_INDEX] += 1
 
                     num_requests += 1
@@ -117,10 +127,7 @@ def get_outstanding_requesters(bucket_name, key_name):
         now_timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for k, v in result.iteritems():
             k = k.split('-')[-1]
-            if (
-                    (REQUEST_PER_MINUTE_LIMIT >= 0 and v[REQUEST_COUNTER_INDEX] > REQUEST_PER_MINUTE_LIMIT) or
-                    (ERROR_PER_MINUTE_LIMIT >= 0 and v[ERROR_COUNTER_INDEX] > ERROR_PER_MINUTE_LIMIT)
-                ):
+            if int(ERROR_PER_MINUTE_LIMIT) >= 0 and v[ERROR_COUNTER_INDEX] > int(ERROR_PER_MINUTE_LIMIT):
                 if k not in outstanding_requesters['block'].keys() or (
                         outstanding_requesters['block'][k]['max_req_per_min'] < v[REQUEST_COUNTER_INDEX] or
                         outstanding_requesters['block'][k]['max_err_per_min'] < v[ERROR_COUNTER_INDEX]
@@ -140,16 +147,24 @@ def get_outstanding_requesters(bucket_name, key_name):
 def merge_current_blocked_requesters(key_name, outstanding_requesters):
     print("[merge_current_blocked_requesters] Start")
 
+    expired = False
+    last_update_age = 0
     try:
-        now_timestamp = datetime.datetime.now()
-        now_timestamp_str = now_timestamp.strftime("%Y-%m-%d %H:%M:%S")
         remote_outstanding_requesters = {}
+
+        #--------------------------------------------------------------------------------------------------------------
+        print("[merge_current_blocked_requesters] \tCalculate Last Update Age")
+        #--------------------------------------------------------------------------------------------------------------
+        s3 = boto3.client('s3')
+        local_file_path = '/tmp/' + key_name.split('/')[-1] + '_REMOTE.json'
+        response = s3.head_object(Bucket=OUTPUT_BUCKET, Key=OUTPUT_FILE_NAME)
+        now_timestamp = datetime.datetime.now(response['LastModified'].tzinfo)
+        now_timestamp_str = now_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        last_update_age = int(((now_timestamp - response['LastModified']).total_seconds())/60)
 
         #--------------------------------------------------------------------------------------------------------------
         print("[merge_current_blocked_requesters] \tDownload current blocked IPs")
         #--------------------------------------------------------------------------------------------------------------
-        local_file_path = '/tmp/' + key_name.split('/')[-1] + '_REMOTE.json'
-        s3 = boto3.client('s3')
         s3.download_file(OUTPUT_BUCKET, OUTPUT_FILE_NAME, local_file_path)
 
         with open(local_file_path, 'r') as file_content:
@@ -160,10 +175,7 @@ def merge_current_blocked_requesters(key_name, outstanding_requesters):
         #----------------------------------------------------------------------------------------------------------
         for k, v in remote_outstanding_requesters['block'].iteritems():
             try:
-                if (
-                        (REQUEST_PER_MINUTE_LIMIT >= 0 and v['max_req_per_min'] > REQUEST_PER_MINUTE_LIMIT) or
-                        (ERROR_PER_MINUTE_LIMIT >= 0 and v['max_err_per_min'] > ERROR_PER_MINUTE_LIMIT)
-                    ):
+                if int(ERROR_PER_MINUTE_LIMIT) >= 0 and v['max_err_per_min'] > int(ERROR_PER_MINUTE_LIMIT):
                     if k in outstanding_requesters['block'].keys():
                         print("[merge_current_blocked_requesters] \t\tUpdating data of BLOCK %s rule"%k)
                         outstanding_requesters['block'][k]['updated_at'] = now_timestamp_str
@@ -174,11 +186,13 @@ def merge_current_blocked_requesters(key_name, outstanding_requesters):
 
                     else:
                         prev_updated_at = datetime.datetime.strptime(v['updated_at'], "%Y-%m-%d %H:%M:%S")
+                        prev_updated_at = prev_updated_at.replace(tzinfo=response['LastModified'].tzinfo)
                         total_diff_min = ((now_timestamp - prev_updated_at).total_seconds())/60
-                        if total_diff_min < BLACKLIST_BLOCK_PERIOD:
+                        if total_diff_min < int(BLACKLIST_BLOCK_PERIOD):
                             print("[merge_current_blocked_requesters] \t\tKeeping %s rule"%k)
                             outstanding_requesters['block'][k] = v
                         else:
+                            expired = True
                             print("[merge_current_blocked_requesters] \t\tExpired %s rule"%k)
 
             except Exception, e:
@@ -189,8 +203,10 @@ def merge_current_blocked_requesters(key_name, outstanding_requesters):
         print("[merge_current_blocked_requesters] \tError merging data")
         print(e)
 
+    need_update = (expired or last_update_age > int(environ['MAX_AGE_TO_UPDATE']) or len(outstanding_requesters['block']) > 0)
+
     print("[merge_current_blocked_requesters] End")
-    return outstanding_requesters
+    return outstanding_requesters, need_update
 
 def write_output(key_name, outstanding_requesters):
     print("[write_output] Start")
@@ -210,7 +226,6 @@ def write_output(key_name, outstanding_requesters):
 
 def waf_get_ip_set(ip_set_id):
     response = None
-    waf = boto3.client('waf')
 
     for attempt in range(API_CALL_NUM_RETRIES):
         try:
@@ -231,7 +246,6 @@ def waf_update_ip_set(ip_set_id, updates_list):
     response = None
 
     if updates_list != []:
-        waf = boto3.client('waf')
         for attempt in range(API_CALL_NUM_RETRIES):
             try:
                 response = waf.update_ip_set(IPSetId=ip_set_id,
@@ -292,14 +306,13 @@ def update_waf_ip_set(outstanding_requesters, ip_set_id, ip_set_already_blocked)
             return
 
         updates_list = []
-        waf = boto3.client('waf')
 
         #--------------------------------------------------------------------------------------------------------------
         print("[update_waf_ip_set] \tTruncate [if necessary] list to respect WAF limit")
         #--------------------------------------------------------------------------------------------------------------
         top_outstanding_requesters = {}
         for key, value in sorted(outstanding_requesters.items(), key=lambda kv: kv[1]['max_req_per_min'], reverse=True):
-            if counter < LIMIT_IP_ADDRESS_RANGES_PER_IP_MATCH_CONDITION:
+            if counter < int(environ['LIMIT_IP_ADDRESS_RANGES_PER_IP_MATCH_CONDITION']):
                 if not is_already_blocked(key, ip_set_already_blocked):
                     top_outstanding_requesters[key] = value
                     counter += 1
@@ -501,7 +514,8 @@ def send_anonymous_usage_data():
               "allowed_requests" : allowed_requests,
               "blocked_requests_all" : blocked_requests_all,
               "blocked_requests_auto_block" : blocked_requests_auto_block,
-              "blocked_requests_blacklist" : blocked_requests_blacklist
+              "blocked_requests_blacklist" : blocked_requests_blacklist,
+              "waf_type" : environ['LOG_TYPE']
           }
         }
 
@@ -525,75 +539,23 @@ def send_anonymous_usage_data():
 #======================================================================================================================
 def lambda_handler(event, context):
     print("[lambda_handler] Start")
-    print(event)
-    bucket_name = event['Records'][0]['s3']['bucket']['name']
-    key_name = urllib.unquote_plus(event['Records'][0]['s3']['object']['key']).decode('utf8')
+
+    outstanding_requesters = {}
 
     try:
+        bucket_name = event['Records'][0]['s3']['bucket']['name']
+        key_name = urllib.unquote_plus(event['Records'][0]['s3']['object']['key']).decode('utf8')
+
         if key_name == OUTPUT_FILE_NAME:
-            print("[lambda_handler] \tIgnore processinf output file")
+            print("[lambda_handler] \tIgnore processing output file")
             return
 
-        #--------------------------------------------------------------------------------------------------------------
-        print("[lambda_handler] \tReading (if necessary) CloudFormation output values")
-        #--------------------------------------------------------------------------------------------------------------
-        global OUTPUT_BUCKET
-        global IP_SET_ID_BLACKLIST
-        global IP_SET_ID_AUTO_BLOCK
-        global BLACKLIST_BLOCK_PERIOD
-        global REQUEST_PER_MINUTE_LIMIT
-        global ERROR_PER_MINUTE_LIMIT
-        global SEND_ANONYMOUS_USAGE_DATA
-        global UUID
-
-        if (OUTPUT_BUCKET == None or IP_SET_ID_BLACKLIST == None or
-            IP_SET_ID_AUTO_BLOCK == None or BLACKLIST_BLOCK_PERIOD == None or
-            REQUEST_PER_MINUTE_LIMIT == None or ERROR_PER_MINUTE_LIMIT == None or
-            SEND_ANONYMOUS_USAGE_DATA == None or UUID == None):
-
-            outputs = {}
-            cf = boto3.client('cloudformation')
-            stack_name = context.invoked_function_arn.split(':')[6].rsplit('-', 2)[0]
-            cf_desc = cf.describe_stacks(StackName=stack_name)
-            for e in cf_desc['Stacks'][0]['Outputs']:
-                outputs[e['OutputKey']] = e['OutputValue']
-
-            if OUTPUT_BUCKET == None:
-                if 'CloudFrontAccessLogBucket' in outputs.keys():
-                    OUTPUT_BUCKET = outputs['CloudFrontAccessLogBucket']
-                else:
-                    OUTPUT_BUCKET = bucket_name
-            if IP_SET_ID_BLACKLIST == None:
-                IP_SET_ID_BLACKLIST = outputs['BlacklistIPSetID']
-            if IP_SET_ID_AUTO_BLOCK == None:
-                IP_SET_ID_AUTO_BLOCK = outputs['AutoBlockIPSetID']
-            if BLACKLIST_BLOCK_PERIOD == None:
-                BLACKLIST_BLOCK_PERIOD = int(outputs['WAFBlockPeriod']) # in minutes
-            if REQUEST_PER_MINUTE_LIMIT == None:
-                try:
-                    REQUEST_PER_MINUTE_LIMIT = int(outputs['RequestThreshold'])
-                except Exception, e:
-                    REQUEST_PER_MINUTE_LIMIT = -1
-            if ERROR_PER_MINUTE_LIMIT == None:
-                try:
-                    ERROR_PER_MINUTE_LIMIT = int(outputs['ErrorThreshold'])
-                except Exception, e:
-                    ERROR_PER_MINUTE_LIMIT = -1
-            if SEND_ANONYMOUS_USAGE_DATA == None:
-                SEND_ANONYMOUS_USAGE_DATA = outputs['SendAnonymousUsageData']
-            if UUID == None:
-                UUID = outputs['UUID']
-
-
-
-        print("[lambda_handler] \t\tOUTPUT_BUCKET = %s"%OUTPUT_BUCKET)
-        print("[lambda_handler] \t\tIP_SET_ID_BLACKLIST = %s"%IP_SET_ID_BLACKLIST)
-        print("[lambda_handler] \t\tIP_SET_ID_AUTO_BLOCK = %s"%IP_SET_ID_AUTO_BLOCK)
-        print("[lambda_handler] \t\tBLACKLIST_BLOCK_PERIOD = %d"%BLACKLIST_BLOCK_PERIOD)
-        print("[lambda_handler] \t\tREQUEST_PER_MINUTE_LIMIT = %d"%REQUEST_PER_MINUTE_LIMIT)
-        print("[lambda_handler] \t\tERROR_PER_MINUTE_LIMIT = %d"%ERROR_PER_MINUTE_LIMIT)
-        print("[lambda_handler] \t\tSEND_ANONYMOUS_USAGE_DATA = %s"%SEND_ANONYMOUS_USAGE_DATA)
-        print("[lambda_handler] \t\tUUID = %s"%UUID)
+        global waf
+        if environ['LOG_TYPE'] == 'alb':
+            session = boto3.session.Session(region_name=environ['REGION'])
+            waf = session.client('waf-regional')
+        else:
+            waf = boto3.client('waf')
 
         #--------------------------------------------------------------------------------------------------------------
         print("[lambda_handler] \tReading input data and get outstanding requesters")
@@ -603,22 +565,29 @@ def lambda_handler(event, context):
         #--------------------------------------------------------------------------------------------------------------
         print("[lambda_handler] \tMerge with current blocked requesters")
         #--------------------------------------------------------------------------------------------------------------
-        outstanding_requesters = merge_current_blocked_requesters(key_name, outstanding_requesters)
+        outstanding_requesters, need_update = merge_current_blocked_requesters(key_name, outstanding_requesters)
 
-        #--------------------------------------------------------------------------------------------------------------
-        print("[lambda_handler] \tUpdate new blocked requesters list to S3")
-        #--------------------------------------------------------------------------------------------------------------
-        write_output(key_name, outstanding_requesters)
+        if need_update:
+            #----------------------------------------------------------------------------------------------------------
+            print("[lambda_handler] \tUpdate new blocked requesters list to S3")
+            #----------------------------------------------------------------------------------------------------------
+            write_output(key_name, outstanding_requesters)
 
-        #--------------------------------------------------------------------------------------------------------------
-        print("[lambda_handler] \tUpdate WAF IP Set")
-        #--------------------------------------------------------------------------------------------------------------
-        ip_set_already_blocked = get_ip_set_already_blocked()
-        num_blocked = update_waf_ip_set(outstanding_requesters['block'], IP_SET_ID_AUTO_BLOCK, ip_set_already_blocked)
+            #----------------------------------------------------------------------------------------------------------
+            print("[lambda_handler] \tUpdate WAF IP Set")
+            #----------------------------------------------------------------------------------------------------------
+            ip_set_already_blocked = get_ip_set_already_blocked()
+            num_blocked = update_waf_ip_set(outstanding_requesters['block'], IP_SET_ID_AUTO_BLOCK, ip_set_already_blocked)
 
-        send_anonymous_usage_data()
+            send_anonymous_usage_data()
 
-        return outstanding_requesters
+        else:
+            #----------------------------------------------------------------------------------------------------------
+            print("[lambda_handler] \tNo changes identified")
+            #----------------------------------------------------------------------------------------------------------
+
     except Exception as e:
         raise e
+
     print("[lambda_handler] End")
+    return outstanding_requesters

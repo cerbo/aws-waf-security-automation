@@ -42,6 +42,10 @@ resource "aws_lambda_function" "LambdaWAFLogParserFunction" {
             BlacklistIPSetID = "${aws_waf_ipset.WAFBlacklistSet.id}"
             AutoBlockIPSetID = "${aws_waf_ipset.WAFAutoBlockSet.id}"
             SendAnonymousUsageData = "${var.SendAnonymousUsageData}"
+            LOG_TYPE = "${var.LogType}"
+            REGION = "${var.aws_region}"
+            LIMIT_IP_ADDRESS_RANGES_PER_IP_MATCH_CONDITION = "${var.LimitIPAddressRangesPerIPMatchCondition}"
+            MAX_AGE_TO_UPDATE = "${var.MaxAgeToUpdate}"
             UUID = "${uuid()}"
         }
     }

@@ -33,6 +33,18 @@ variable "CloudFrontAccessLogBucket" {
 
 
 ###############################################################################
+# LOG TYPE - either "CloudFront" or "ALB" #
+# Possible values: 'cloudfront' or 'alb'          #
+###########################################
+variable "LogType" {
+    default = "cloudfront"
+    # or
+    #default = "alb"
+}
+
+
+
+###############################################################################
 # CUSTOM VARIABLES - TUNNING WAF #
 #   BE CAREFUL, MASSIVE IMPACT   #
 ##################################
@@ -40,12 +52,18 @@ variable "CloudFrontAccessLogBucket" {
 variable "ErrorThreshold" {
     default = "500"
 }
-#default = "400"
+#default = "2000"
 variable "RequestThreshold" {
     default = "800"
 }
 variable "WAFBlockPeriod" {
     default = "240"
+}
+variable "LimitIPAddressRangesPerIPMatchCondition" {
+    default = "10000"
+}
+variable "MaxAgeToUpdate" {
+    default = "30"
 }
 
 
@@ -92,7 +110,6 @@ variable "aws_region" {
     description = "AWS US-East-1 region"
     default     = "us-east-1"
 }
-
 
 
 ###############################################################################

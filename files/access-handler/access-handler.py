@@ -13,10 +13,10 @@ import math
 import time
 import json
 import datetime
+from os import environ
+
 from urllib2 import Request
 from urllib2 import urlopen
-### CERBO.IO | 12-25-2016 | Custom Feed WAF with dynamic variables from Terraform
-import os
 
 print('Loading function')
 
@@ -24,21 +24,19 @@ print('Loading function')
 # Constants
 #======================================================================================================================
 API_CALL_NUM_RETRIES = 3
-#IP_SET_ID_BAD_BOT = None
-#SEND_ANONYMOUS_USAGE_DATA = None
-#UUID = None
 
-### CERBO.IO | 12-25-2016 | Custom Feed WAF with dynamic variables from Terraform
-IP_SET_ID_BAD_BOT = os.environ['WAFBadBotSet']
-SEND_ANONYMOUS_USAGE_DATA = os.environ['SendAnonymousUsageData']
-UUID = os.environ['UUID']
+waf = None
+
+### CERBO.IO | 12-25-2016 | Updated: 1-13-2018 | Custom Feed WAF with dynamic variables from Terraform
+IP_SET_ID_BAD_BOT = environ['WAFBadBotSet']
+SEND_ANONYMOUS_USAGE_DATA = environ['SendAnonymousUsageData']
+UUID = environ['UUID']
 
 
 #======================================================================================================================
 # Auxiliary Functions
 #======================================================================================================================
 def waf_update_ip_set(ip_set_id, source_ip):
-    waf = boto3.client('waf')
     for attempt in range(API_CALL_NUM_RETRIES):
         try:
             response = waf.update_ip_set(IPSetId=ip_set_id,
@@ -62,13 +60,10 @@ def waf_update_ip_set(ip_set_id, source_ip):
 
 def waf_get_ip_set(ip_set_id):
     response = None
-    waf = boto3.client('waf')
-
     for attempt in range(API_CALL_NUM_RETRIES):
         try:
             response = waf.get_ip_set(IPSetId=ip_set_id)
         except Exception, e:
-            print(e)
             delay = math.pow(2, attempt)
             print("[waf_get_ip_set] Retrying in %d seconds..." % (delay))
             time.sleep(delay)
@@ -193,7 +188,8 @@ def send_anonymous_usage_data():
               "bad_bot_ip_set_size" : bad_bot_ip_set_size,
               "allowed_requests" : allowed_requests,
               "blocked_requests_all" : blocked_requests_all,
-              "blocked_requests_bad_bot" : blocked_requests_bad_bot
+              "blocked_requests_bad_bot" : blocked_requests_bad_bot,
+              "waf_type" : environ['LOG_TYPE']
           }
         }
 
@@ -216,37 +212,27 @@ def send_anonymous_usage_data():
 # Lambda Entry Point
 #======================================================================================================================
 def lambda_handler(event, context):
-    response = {}
+    response = {
+        'statusCode': 200,
+        'headers': {'Content-Type': 'application/json'},
+        'body': ''
+    }
 
     print '[lambda_handler] Start'
     try:
-        source_ip = event['source_ip'].encode('utf8').split(',')[0].strip()
-        bad_bot_ip_set = event['bad_bot_ip_set'].encode('utf8')
-        waf_update_ip_set(bad_bot_ip_set, source_ip)
-        response['message'] = "[%s] Thanks for the visit."%source_ip
+        global waf
+        if environ['LOG_TYPE'] == 'alb':
+            session = boto3.session.Session(region_name=environ['REGION'])
+            waf = session.client('waf-regional')
+        else:
+            waf = boto3.client('waf')
 
-        global IP_SET_ID_BAD_BOT
-        global SEND_ANONYMOUS_USAGE_DATA
-        global UUID
+        source_ip = event['headers']['X-Forwarded-For'].encode('utf8').split(',')[0].strip()
+        waf_update_ip_set(IP_SET_ID_BAD_BOT, source_ip)
 
-        if (IP_SET_ID_BAD_BOT == None or SEND_ANONYMOUS_USAGE_DATA == None or UUID == None):
-            outputs = {}
-            cf = boto3.client('cloudformation')
-            stack_name = context.invoked_function_arn.split(':')[6].rsplit('-', 2)[0]
-            cf_desc = cf.describe_stacks(StackName=stack_name)
-            for e in cf_desc['Stacks'][0]['Outputs']:
-                outputs[e['OutputKey']] = e['OutputValue']
-
-            if IP_SET_ID_BAD_BOT == None:
-                IP_SET_ID_BAD_BOT = outputs['BadBotSetID']
-            if SEND_ANONYMOUS_USAGE_DATA == None:
-                SEND_ANONYMOUS_USAGE_DATA = outputs['SendAnonymousUsageData']
-            if UUID == None:
-                UUID = outputs['UUID']
-
-        print("[lambda_handler] \t\tIP_SET_ID_BAD_BOT = %s"%IP_SET_ID_BAD_BOT)
-        print("[lambda_handler] \t\tSEND_ANONYMOUS_USAGE_DATA = %s"%SEND_ANONYMOUS_USAGE_DATA)
-        print("[lambda_handler] \t\tUUID = %s"%UUID)
+        message = {}
+        message['message'] = "[%s] Thanks for the visit."%source_ip
+        response['body'] = json.dumps(message)
 
         send_anonymous_usage_data()
 
