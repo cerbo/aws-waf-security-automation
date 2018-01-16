@@ -14,14 +14,20 @@
 #   limitations under the License.
 ###############################################################################
 
-resource "aws_s3_bucket" "WAFLambdaFiles" {
-    bucket = "${var.customer}-waflambdafiles"
-    acl = "private"
 
-    tags {
-        Name = "WAF Lambda Files"
-        Environment = "Production"
-    }
+resource "random_string" "lambda_bucket" {
+  length  = 8
+  special = false
+}
+
+resource "aws_s3_bucket" "WAFLambdaFiles" {
+  bucket = "waflambdafiles-${random_string.lambda_bucket.result}"
+  acl    = "private"
+
+  tags {
+    Name        = "WAF Lambda Files"
+    Environment = "Production"
+  }
 }
 resource "aws_s3_bucket_object" "LogParserZip" {
     depends_on = ["aws_s3_bucket.WAFLambdaFiles"]
