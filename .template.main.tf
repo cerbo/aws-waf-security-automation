@@ -27,6 +27,10 @@ variable "CloudFrontAccessLogBucket" {
     description = "[REQUIRED] CDN S3 Logs Bucket:"
     default     = "cerboZYXcerbo"
 }
+variable "WafFilesBucketName" {
+    description = "[OPTIONAL] Bucket where Lambda files or stored.  Defaults to 'customer-waflambdafiles-randomstring':"
+    default = ""
+}
 ###############################################################################
 
 
