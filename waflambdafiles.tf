@@ -20,8 +20,12 @@ resource "random_string" "lambda_bucket" {
   special = false
 }
 
+locals {
+   waf_bucket_name = "${var.customer}-waflambdafiles-${random_string.lambda_bucket.result}"
+}
+
 resource "aws_s3_bucket" "WAFLambdaFiles" {
-  bucket = "waflambdafiles-${random_string.lambda_bucket.result}"
+  bucket = "${var.WafFilesBucketName != "" ? var.WafFilesBucketName : var.waf_bucket_name}"
   acl    = "private"
 
   tags {
