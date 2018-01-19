@@ -25,7 +25,7 @@ locals {
 }
 
 resource "aws_s3_bucket" "WAFLambdaFiles" {
-  bucket = "${var.WafFilesBucketName != "" ? var.WafFilesBucketName : var.waf_bucket_name}"
+  bucket = "${var.WafFilesBucketName != "" ? var.WafFilesBucketName : local.waf_bucket_name}"
   acl    = "private"
 
   tags {
