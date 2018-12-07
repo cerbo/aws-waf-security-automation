@@ -11,7 +11,7 @@ Cloud Formation) are:
 
 ### Getting Started is very simple
 
-First: Edit "amazon-cred-file.tf", and point to your AWS cred file.
+First: Edit "amazon-cred-file.tf", and point to your AWS cred file, or set and export your AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_DEFAULT_REGION environment variables.
 
 Then, for each project/customer's CDN S3 bucket, run:
 
