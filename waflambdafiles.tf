@@ -18,6 +18,7 @@
 resource "random_string" "lambda_bucket" {
   length  = 8
   special = false
+  upper = false
 }
 
 locals {
