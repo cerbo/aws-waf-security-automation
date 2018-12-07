@@ -1,0 +1,30 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "kinesis:PutRecord",
+                "kinesis:DeleteStream",
+                "kinesis:DescribeStreamSummary",
+                "kinesis:PutRecords",
+                "kinesis:CreateStream",
+                "kinesis:GetRecords",
+                "kinesis:DescribeStream"
+            ],
+            "Resource": "arn:aws:kinesis:*:*:stream/*"
+        },
+        {
+            "Sid": "VisualEditor1",
+            "Effect": "Allow",
+            "Action": [
+                "kinesis:ListStreams",
+                "kinesis:EnableEnhancedMonitoring",
+                "kinesis:DescribeLimits",
+                "kinesis:DisableEnhancedMonitoring"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
